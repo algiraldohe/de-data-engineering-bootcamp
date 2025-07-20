@@ -25,7 +25,7 @@ CROSS JOIN series d)
 SELECT
 	user_id,
 	browser_type,
-	BIT_COUNT(CAST(CAST(SUM(placeholder_int_value) AS BIGINT) AS BIT(32))) AS device_activity_datelist_int,
+	BIT_COUNT(CAST(CAST(SUM(placeholder_int_value) AS BIGINT) AS BIT(32))) AS datelist_int,
 	-- using a bit mask to compute periodic is_active
 	BIT_COUNT(CAST(CAST(SUM(placeholder_int_value) AS BIGINT) AS BIT(32))) > 0 AS dim_is_monthly_active,
 	BIT_COUNT('11111110000000000000000000000000'::BIT(32) & CAST(CAST(SUM(placeholder_int_value) AS BIGINT) AS BIT(32))) > 0 AS dim_is_weekly_active,
