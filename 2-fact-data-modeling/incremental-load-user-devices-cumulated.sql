@@ -1,13 +1,3 @@
--- DDL for cummulative table
--- DROP TABLE user_devices_cumulated;
-CREATE TABLE user_devices_cumulated (
-	user_id TEXT,
-	browser_type TEXT,
-	device_activity_datelist DATE[],
-	date DATE,
-	PRIMARY KEY (user_id, browser_type, date)
-);
-
 -- Incremmental query to populate user_devices_cumulated
 WITH yesterday AS (
 	SELECT * FROM user_devices_cumulated
