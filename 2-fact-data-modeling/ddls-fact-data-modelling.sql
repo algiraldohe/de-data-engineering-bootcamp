@@ -9,14 +9,14 @@ CREATE TABLE user_devices_cumulated (
 );
 
 -- creating hosts cumulative activity table
+DROP TABLE hosts_cumulated;
 CREATE TABLE hosts_cumulated (
 	host TEXT,
 	host_activity_datelist DATE[],
-	hit_array INT[],
-	unique_visitors_array INT[],
 	date DATE,
 	PRIMARY KEY (host, date)
 );
+
 
 -- creating hosts monthly reduced fact table
 -- DROP TABLE host_activity_reduced;
