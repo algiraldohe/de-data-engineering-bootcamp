@@ -1,4 +1,3 @@
-
 -- incremental load for host_activity_datelist
 
 WITH yesterday AS (
