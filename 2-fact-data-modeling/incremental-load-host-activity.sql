@@ -17,7 +17,7 @@ today AS (
 INSERT INTO hosts_cumulated (
 SELECT
 	COALESCE(t.host, y.host) AS host,
-	-- cumulate dates in array for hosts
+	-- cumulate activity dates in array for hosts
 	CASE WHEN y.host_activity_datelist IS NULL THEN ARRAY[t.date]
 		 WHEN t.date IS NULL THEN y.host_activity_datelist
 		 WHEN y.host_activity_datelist IS NOT NULL THEN ARRAY[t.date] || y.host_activity_datelist

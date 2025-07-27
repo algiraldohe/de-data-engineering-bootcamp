@@ -25,6 +25,7 @@ CROSS JOIN series d)
 SELECT
 	user_id,
 	browser_type,
+	-- output from processing dates array into a datelist_int
 	BIT_COUNT(CAST(CAST(SUM(placeholder_int_value) AS BIGINT) AS BIT(32))) AS datelist_int,
 	-- using a bit mask to compute periodic is_active
 	BIT_COUNT(CAST(CAST(SUM(placeholder_int_value) AS BIGINT) AS BIT(32))) > 0 AS dim_is_monthly_active,
@@ -33,10 +34,10 @@ SELECT
 FROM place_holder_ints
 GROUP BY user_id, browser_type, date;
 
-	/*
-	The bit mask works bit by bit with the "&" condition eg. '11111110000000000000000000000000' &  '00001110000000000000000000000000' = '00001110000000000000000000000000'
-	as bits 4,5,6 are the ones active on both bit-chains, this allows to filter the spcific periodicity or dates we want
-	to compute active use for
-	*/
+/*
+The bit mask works bit by bit with the "&" condition eg. '11111110000000000000000000000000' &  '00001110000000000000000000000000' = '00001110000000000000000000000000'
+as bits 4,5,6 are the ones active on both bit-chains, this allows to filter the spcific periodicity or dates we want
+to compute active use for
+*/
 
 
