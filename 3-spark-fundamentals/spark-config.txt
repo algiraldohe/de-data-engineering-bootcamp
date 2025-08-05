@@ -1,0 +1,14 @@
+
+Fix for Spark OutOfMemoryError: Java heap space
+
+(1) Adjust docker resource allocation:  On the Docker desktop, go to  Settings >  Resources, increase memory limit slider to max (it might 8gb, 16gb depending on your machine). Also adjust virtual disk limit to an higher number like 128G.
+
+(2) Update spark configs in the iceberg container:
+ On the Docker desktop, go to Containers > 3-spark-fundamentals > spark-iceberg > Files. 
+Scroll down to opt>config, right click on spark-defaults-conf to edit it, scroll to the bottom, add the following 4 lines
+
+spark.serializer                       org.apache.spark.serializer.KryoSerializer
+spark.driver.memory                    8g
+spark.memory.offHeap.enabled           true
+spark.memory.offHeap.size              8g
+

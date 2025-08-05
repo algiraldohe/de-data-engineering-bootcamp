@@ -94,7 +94,7 @@ matches_details_df.createTempView("matches_details")
 # medals_matches_players
 medals_matches_players_df.createTempView("medals_matches_players")
 
-# clean and dedupped medals dataset
+# clean medal_id in medals
 spark.sql(
     """
         WITH cleaned_src AS (
@@ -105,12 +105,27 @@ spark.sql(
                        ELSE medal_id
                   END AS medal_id
                 , ROW_NUMBER() OVER(PARTITION BY name ORDER BY medal_id) row_
-            FROM dedupped_medals 
+            FROM medals 
         )
     
         SELECT name, medal_id FROM cleaned_src WHERE row_ = 1 AND name IS NOT NULL
     """
 ).createOrReplaceTempView("dedupped_medals")
+
+# map medals by match and player
+spark.sql(
+    """
+        SELECT /*+ BROADCASTJOIN(dm) */
+            mmp.match_id
+            , mmp.player_gamertag
+            , map_from_entries(collect_list(struct(dm.name, mmp.count))) medals_count_map
+        FROM medals_matches_players mmp
+        INNER JOIN dedupped_medals dm ON mmp.medal_id = dm.medal_id 
+        GROUP BY 
+            mmp.match_id
+            , mmp.player_gamertag
+    """
+).createOrReplaceTempView("medals_count_map")
 
 # clean maps before join
 spark.sql(
@@ -122,55 +137,40 @@ spark.sql(
 # deactivate default broadcast join threshold
 spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "-1")
 
-# bucket joins, broadcast joins and aggregations
-aggregated_df = spark.sql(
+# fact data to perform analytics
+fact_matches_df = spark.sql(
     """
-        WITH joined_view AS (
-            SELECT
-                DATE(m.completion_date) AS match_completion_date
-                , mmp.player_gamertag
-                , m.playlist_id
-                , mp.name AS map_name
-                , md.name AS medal_name
-                , FIRST(md.player_total_kills) AS player_total_kills
-                , SUM(mmp.count) AS medal_count
-                , COUNT(m.match_id) AS number_matches
-            FROM matches m
-            INNER JOIN medals_matches_players mmp ON m.match_id = mmp.match_id
-            INNER JOIN matches_details md ON m.match_id = md.match_id AND mmp.player_gamertag = md.player_gamertag
-            INNER JOIN dedupped_medals md ON mmp.medal_id = md.medal_id
-            INNER JOIN cleansed_maps mp ON m.mapid = mp.mapid
-            GROUP BY 1,2,3,4,5
-        )
+        SELECT /*+ BROADCASTJOIN(mcm, mp) */
+            DATE(m.completion_date) AS match_completion_date
+            , m.match_id
+            , md.player_gamertag
+            , m.playlist_id
+            , mp.name AS map_name
+            , md.player_total_kills
+            , mcm.medals_count_map
 
-        SELECT 
-            match_completion_date
-            , player_gamertag
-            , playlist_id
-            , map_name
-            , SUM(number_matches) AS number_matches
-            , FIRST(CAST(player_total_kills AS INTEGER)) AS player_total_kills
-            , map_from_entries(collect_list(struct(medal_name, medal_count))) AS medal_count_map
+        FROM matches m
+        INNER JOIN matches_details md ON m.match_id = md.match_id 
+        INNER JOIN medals_count_map mcm ON m.match_id = mcm.match_id AND md.player_gamertag = mcm.player_gamertag
+        INNER JOIN cleansed_maps mp ON m.mapid = mp.mapid
 
-        FROM joined_view
-        GROUP BY 1,2,3,4
     """
 )
 
 # explore different partitions for the aggregated table
-aggregated_df.repartition(5, f.col("match_completion_date"), f.col("map_name")) \
+fact_matches_df.repartition(5, f.col("match_completion_date"), f.col("map_name")) \
                           .sortWithinPartitions(f.col("match_completion_date"), f.col("map_name"))\
                           .write.mode("overwrite").saveAsTable("bootcamp.sorted_agg_medals_matches_players_05")
 
-aggregated_df.repartition(10, f.col("match_completion_date"), f.col("map_name")) \
+fact_matches_df.repartition(10, f.col("match_completion_date"), f.col("map_name")) \
                           .sortWithinPartitions(f.col("match_completion_date"), f.col("map_name"))\
                           .write.mode("overwrite").saveAsTable("bootcamp.sorted_agg_medals_matches_players_10")
 
-aggregated_df.repartition(5, f.col("match_completion_date"), f.col("map_name"), f.col("playlist_id")) \
+fact_matches_df.repartition(5, f.col("match_completion_date"), f.col("map_name"), f.col("playlist_id")) \
                           .sortWithinPartitions(f.col("match_completion_date"), f.col("map_name"), f.col("playlist_id"))\
                           .write.mode("overwrite").saveAsTable("bootcamp.sorted_agg_medals_matches_players_2_05")
 
-aggregated_df.repartition(10, f.col("match_completion_date"), f.col("map_name"), f.col("playlist_id")) \
+fact_matches_df.repartition(10, f.col("match_completion_date"), f.col("map_name"), f.col("playlist_id")) \
                           .sortWithinPartitions(f.col("match_completion_date"), f.col("map_name"), f.col("playlist_id"))\
                           .write.mode("overwrite").saveAsTable("bootcamp.sorted_agg_medals_matches_players_2_10")
 
@@ -194,5 +194,54 @@ spark.sql(
 
         SELECT SUM(file_size_in_bytes) as size, COUNT(1) as num_files, 'sorted_map_playlist' 
         FROM demo.bootcamp.sorted_agg_medals_matches_players_2_10.files
+    """
+).show()
+
+# solving analytics questions
+
+# which player averages the most kills
+spark.sql(
+    """
+        SELECT player_gamertag, SUM(player_total_kills) / COUNT(match_id) avg_kills
+        FROM demo.bootcamp.sorted_agg_medals_matches_players_2_05
+        GROUP BY 1
+        ORDER BY avg_kills DESC
+    """
+).show()
+
+# which playlist gets played the most?
+spark.sql(
+    """
+        SELECT playlist_id, COUNT(DISTINCT match_id) matches 
+        FROM demo.bootcamp.sorted_agg_medals_matches_players_2_05
+        GROUP BY playlist_id
+        ORDER BY matches DESC
+    """
+).show()
+
+# which map gets played the most?
+spark.sql(
+    """
+        SELECT map_name, COUNT(DISTINCT match_id) matches 
+        FROM demo.bootcamp.sorted_agg_medals_matches_players_2_05
+        GROUP BY 1
+    """
+).show()
+
+# which map do players get the most Killing Spree medals on?
+spark.sql(
+    """
+        WITH unnested_records AS (
+            SELECT 
+                match_id
+                , map_name
+                , explode(medals_count_map) 
+            FROM demo.bootcamp.sorted_agg_medals_matches_players_2_05
+        )
+
+        SELECT map_name, COUNT(match_id) numb_medals
+        FROM unnested_records
+        WHERE key = 'Killing Spree'
+        GROUP BY map_name
     """
 ).show()
