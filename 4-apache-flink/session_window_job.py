@@ -4,6 +4,8 @@ from pyflink.table.udf import ScalarFunction, udf
 from pyflink.table.expressions import lit, col
 from pyflink.common.time import Duration
 from pyflink.datastream.functions import ProcessWindowFunction, AggregateFunction
+from pyflink.table.window import Session
+
 import os
 import json
 import requests
@@ -12,7 +14,7 @@ from pyflink.table import EnvironmentSettings, DataTypes, TableEnvironment, Stre
 
 
 def create_processed_events_sink_postgres(t_env):
-    table_name = 'session_processed_events'
+    table_name = 'processed_events'
     sink_ddl = f"""
         CREATE TABLE {table_name} (
             ip VARCHAR,
@@ -88,9 +90,29 @@ def create_events_source_kafka(t_env):
             'format' = 'json'
         );
         """
-    print(source_ddl)
     t_env.execute_sql(source_ddl)
     return table_name
+
+def create_aggregated_events_sink_postgres(t_env):
+    table_name = 'session_processed_events'
+    sink_ddl = f"""
+        CREATE TABLE {table_name} (
+            event_hour TIMESTAMP(3),
+            ip VARCHAR,
+            host VARCHAR,
+            num_hits BIGINT
+        ) WITH (
+            'connector' = 'jdbc',
+            'url' = '{os.environ.get("POSTGRES_URL")}',
+            'table-name' = '{table_name}',
+            'username' = '{os.environ.get("POSTGRES_USER", "postgres")}',
+            'password' = '{os.environ.get("POSTGRES_PASSWORD", "postgres")}',
+            'driver' = 'org.postgresql.Driver'
+        );
+    """
+    t_env.execute_sql(sink_ddl)
+    return table_name
+
 
 def log_processing():
     print('Starting Job!')
@@ -106,18 +128,23 @@ def log_processing():
     t_env.create_temporary_function("get_location", get_location)
     try:
         source_table = create_events_source_kafka(t_env)
-        postgres_sink = create_processed_events_sink_postgres(t_env)
+        aggregated_sink_table = create_aggregated_events_sink_postgres(t_env)
 
-        t_env.execute_sql(f"""
-        SELECT *
-        FROM
-            SESSION(
-                TABLE {source_table} PARTITION BY ip,
-                DESCRIPTOR(event_timestamp),
-                INTERVAL '5' MINUTES
+        session_table = t_env.from_path(source_table).window(
+            Session.with_gap(lit(5).minutes) \
+                .on(col("event_timestamp")) \
+                .alias("w")).group_by( col("w"), col("ip"), col("host"))
+        
+        sessioned_table_grouped = session_table.select(
+                    col("w").start.alias("event_hour"),
+                    col("ip"),
+                    col("host"),
+                    col("host").count.alias("num_hits")
             )
-        );
-        """).print()
+        
+        sessioned_table_grouped.execute_insert(aggregated_sink_table).wait()
+        print("Writing records from Kafka to JDBC sink")
+
 
     except Exception as e:
         print("Writing records from Kafka to JDBC failed:", str(e))
